@@ -1,0 +1,32 @@
+name: Generate One Episode
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TOPIC: "修仙"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install pillow moviepy edge-tts python-docx requests
+      - run: python short_drama.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: episode
+          path: 短剧_第*.mp4
+          if-no-files-found: ignore
+      - name: Commit state
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add drama_state.json
+          git diff --staged --quiet || git commit -m "Update state"
+          git push
