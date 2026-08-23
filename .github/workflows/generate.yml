@@ -2,8 +2,8 @@ name: Generate One Episode
 
 on:
   schedule:
-    - cron: '*/5 * * * *'   # 每5分钟触发一次
-  workflow_dispatch:          # 保留手动触发
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -51,7 +51,7 @@ jobs:
       - name: Commit state
         run: |
           git config user.name "github-actions"
-          git config.user.email "actions@github.com"
+          git config user.email "actions@github.com"
           git add drama_state.json
           git diff --staged --quiet || git commit -m "Update state"
           git push
