@@ -1,4 +1,4 @@
-  # -*- coding: utf-8 -*-
+       # -*- coding: utf-8 -*-
 import sys, io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
@@ -28,7 +28,6 @@ DRAMA_DESC = ("肖鹏穿越修仙界，开局就被退婚、被逐出师门，�
               "88集逆袭之路，从被人踩在脚下到一剑斩断苍穹——你以为他输定了？"
               "不，这才是他封神的开始！")
 
-# ===================== 人物设定 =====================
 MAIN_CHARACTER = {
     "name": "肖鹏",
     "gender": "男性",
@@ -83,18 +82,16 @@ SIDE_CHARACTERS = {
     }
 }
 
-# ===================== 匿名模式参数 =====================
 IMAGE_INTERVAL = 20.0
 AUDIO_INTERVAL = 5.0
 RETRY_INTERVAL = 20.0
-EPISODE_INTERVAL = 5      # 自动化中集间等待缩短为5秒（不必要等待）
+EPISODE_INTERVAL = 5
 AUDIO_RETRIES = 3
 IMAGE_TIMEOUT = 120
 MAX_IMAGE_RETRIES = 5
 MAX_AUDIO_RETRIES = 3
 USE_PLACEHOLDER = False
 
-# ===================== 状态管理 =====================
 def load_state():
     if os.path.exists(STATE_FILE):
         try:
@@ -108,7 +105,6 @@ def save_state(ep, ending):
     with open(STATE_FILE, 'w', encoding='utf-8') as f:
         json.dump({"episode": ep, "last_ending": ending}, f, ensure_ascii=False, indent=2)
 
-# ===================== 提示词构建 =====================
 def build_character_prompt(scene_desc, emotion="平静", action="站立", 
                           characters=[], special_effects=""):
     base_style = ("Chinese comic style, dramatic, vertical 9:16, high detail, "
@@ -157,7 +153,6 @@ def generate_skill_effect(skill_type="剑法"):
     }
     return random.choice(effects.get(skill_type, effects["剑法"]))
 
-# ===================== 剧本生成 =====================
 class ScriptGen:
     def __init__(self, last_ending=""):
         self.last_ending = last_ending
@@ -233,7 +228,6 @@ class ScriptGen:
         self.scene_counter += 1
         return script
 
-# ===================== 静音文件 =====================
 def create_silence():
     if not os.path.exists(SILENCE_MP3):
         try:
@@ -244,7 +238,6 @@ def create_silence():
         except Exception as e:
             print(f"⚠️ 静音文件创建失败: {e}")
 
-# ===================== 图片生成 =====================
 def generate_image(prompt, save_path):
     url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width=1080&height=1920&nologo=true"
     start_time = time.time()
@@ -305,7 +298,6 @@ def generate_image(prompt, save_path):
         return {"path": None, "prompt": prompt[:100], "url": url, 
                 "status": "failed", "time": elapsed, "retries": MAX_IMAGE_RETRIES}
 
-# ===================== 配音 =====================
 async def gen_audio(text, path):
     if not text or len(text.strip()) < 3:
         shutil.copy(SILENCE_MP3, path)
@@ -335,7 +327,6 @@ async def gen_audio(text, path):
     return {"path": path, "text": text[:50], "status": "silence", "voice": None, 
             "time": elapsed, "retries": MAX_AUDIO_RETRIES}
 
-# ===================== 运镜 =====================
 def apply_camera_motion(clip, duration, scene_type="普通"):
     if scene_type == "战斗":
         motion_types = ['zoom_fast', 'pan_h', 'shake']
@@ -395,7 +386,6 @@ def apply_camera_motion(clip, duration, scene_type="普通"):
         print(f"⚠️ 运镜应用失败: {e}")
         return clip, "无运镜"
 
-# ===================== 字幕 =====================
 def add_subtitle(image_path, text, output_path):
     if not os.path.exists(image_path):
         return False
@@ -440,7 +430,6 @@ def add_subtitle(image_path, text, output_path):
             shutil.copy(image_path, output_path)
         return False
 
-# ===================== 片头片尾 =====================
 def create_header_footer():
     try:
         header = TextClip("⚠️ AI辅助制作", fontsize=60, color='white', font='SimHei',
@@ -460,7 +449,6 @@ def create_header_footer():
         bg = ColorClip(size=IMAGE_SIZE, color=(0,0,0), duration=3)
         return bg, bg
 
-# ===================== 视频合成 =====================
 def compose(scenes, out_file):
     try:
         header, footer = create_header_footer()
@@ -521,7 +509,6 @@ def compose(scenes, out_file):
         print(f"❌ 视频合成失败: {e}")
         return None, []
 
-# ===================== 报告生成 =====================
 def generate_report(ep_num, script, img_logs, audio_logs, motion_log, video_path, topic):
     try:
         report_dir = os.path.join(REPORT_BASE, f"第{ep_num:03d}集")
@@ -544,7 +531,6 @@ def generate_report(ep_num, script, img_logs, audio_logs, motion_log, video_path
     except Exception as e:
         print(f"⚠️ 报告生成失败: {e}")
 
-# ===================== 封面生成 =====================
 def generate_cover(ep_num, title, output_path):
     try:
         bg = Image.new('RGB', IMAGE_SIZE, (30, 30, 80))
@@ -569,7 +555,6 @@ def generate_cover(ep_num, title, output_path):
     except Exception as e:
         print(f"⚠️ 封面生成失败: {e}")
 
-# ===================== 发布数据包 =====================
 def generate_publish_package(episode_count, title, desc):
     package_dir = os.path.join(REPORT_BASE, "publish_package")
     os.makedirs(package_dir, exist_ok=True)
@@ -581,7 +566,6 @@ def generate_publish_package(episode_count, title, desc):
     generate_cover(episode_count, title, cover_path)
     print(f"📦 发布数据包已生成: {package_dir}")
 
-# ===================== 制作单集（增加环境变量输出） =====================
 async def make_episode(ep_num, topic):
     print(f"\n{'='*60}")
     print(f"🎬 制作第 {ep_num} 集")
@@ -602,7 +586,6 @@ async def make_episode(ep_num, topic):
     print(f"📝 剧本生成完成，共 {len(script)} 幕")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
-    # 生成图片
     img_logs = []
     print("\n🎨 开始生成图片...")
     for i, s in enumerate(script):
@@ -614,7 +597,6 @@ async def make_episode(ep_num, topic):
             print(f"⏳ 等待 {IMAGE_INTERVAL}s...")
             time.sleep(IMAGE_INTERVAL)
     
-    # 生成配音
     audio_logs = []
     print("\n🎤 开始生成配音...")
     for i, s in enumerate(script):
@@ -624,7 +606,6 @@ async def make_episode(ep_num, topic):
         if i < len(script) - 1:
             await asyncio.sleep(AUDIO_INTERVAL)
     
-    # 合成视频
     print("\n🎬 开始合成视频...")
     out_file = f"短剧_第{ep_num:03d}集_90s.mp4"
     final_video, motion_log = compose(script, out_file)
@@ -637,18 +618,14 @@ async def make_episode(ep_num, topic):
     shutil.rmtree(OUTPUT_DIR, ignore_errors=True)
     print(f"\n✅ 第 {ep_num} 集完成！")
     
-    # 👇 将当前集数写入环境变量（供GitHub Actions使用）
     env_file = os.environ.get('GITHUB_ENV')
     if env_file:
         with open(env_file, 'a') as f:
             f.write(f"EPISODE_NUM={ep_num}\n")
             f.write(f"VIDEO_FILE={out_file}\n")
     
-    # 自动化中不等待长时间（避免占用runner）
-    # 原本有 await asyncio.sleep(EPISODE_INTERVAL)，但这里我们缩短为2秒
     await asyncio.sleep(2)
 
-# ===================== 主程序（适配自动化） =====================
 async def main():
     print("=" * 60)
     print("🎬 AI短剧自动化工厂 v5.0（匿名免费版）")
@@ -665,7 +642,6 @@ async def main():
     
     create_silence()
     
-    # 检查依赖
     try:
         import PIL, moviepy, edge_tts, docx
         print("✅ 所有依赖库已安装")
@@ -674,7 +650,6 @@ async def main():
         print("请运行: pip install pillow moviepy edge-tts python-docx requests")
         return
     
-    # 主题从环境变量获取，否则交互输入
     topic = os.environ.get('TOPIC', '').strip()
     if not topic:
         topic = input("请输入主题（直接回车使用'修仙'）: ").strip() or "修仙"
@@ -690,11 +665,8 @@ async def main():
     print("⏰ 每集预计耗时：15-30分钟（取决于网络）")
     print("=" * 60)
     
-    # 只生成一集（自动化每次只跑一集，如果想一次跑多集可循环，但会超时）
-    # 这里我们只生成当前需要的一集
     if start <= MAX_EPISODES:
         await make_episode(start, topic)
-        # 如果全部完成，生成发布包
         if start == MAX_EPISODES:
             generate_publish_package(MAX_EPISODES, DRAMA_TITLE, DRAMA_DESC)
             print(f"\n🎉 全部 {MAX_EPISODES} 集生成完成！")
