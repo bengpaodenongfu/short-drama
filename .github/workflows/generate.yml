@@ -24,20 +24,29 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Install Python dependencies (verbose)
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --no-cache-dir --force-reinstall pillow moviepy edge-tts python-docx requests
+          python -m pip install --no-cache-dir pillow moviepy edge-tts python-docx requests
 
-      - name: Verify installations
+      - name: Debug environment
         run: |
-          python -c "import moviepy; print('✅ moviepy imported successfully')"
-          python -c "import PIL; print('✅ PIL imported successfully')"
-          python -c "import edge_tts; print('✅ edge_tts imported successfully')"
-          python -c "import docx; print('✅ docx imported successfully')"
+          echo "=== Python executable ==="
+          which python
+          python --version
+          echo "=== Installed packages ==="
+          python -m pip list
+          echo "=== Test import moviepy ==="
+          python -c "import moviepy; print('✅ moviepy imported')"
+          python -c "import PIL; print('✅ PIL imported')"
+          python -c "import edge_tts; print('✅ edge_tts imported')"
 
-      - name: Run script
-        run: python short_drama.py
+      - name: Run script (with verification)
+        run: |
+          echo "=== Re-check moviepy before run ==="
+          python -c "import moviepy; print('✅ moviepy available')"
+          echo "=== Starting script ==="
+          python short_drama.py
 
       - name: Upload video artifact
         uses: actions/upload-artifact@v4
