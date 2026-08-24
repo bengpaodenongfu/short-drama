@@ -3,8 +3,9 @@ import sys, io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 import os, json, random, time, shutil, requests, asyncio, datetime, math
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from moviepy.editor import *
+from moviepy.video.fx.all import fadein, fadeout
 from moviepy.audio.fx.all import audio_loop
 import edge_tts
 from docx import Document
@@ -12,7 +13,7 @@ from docx import Document
 # ===================== 用户配置区 =====================
 MAX_EPISODES = 88
 SCENES_PER_EPISODE = 25
-SECONDS_PER_SCENE = 3.6
+SECONDS_PER_SCENE = 3.2          # 略微缩短，为转场留出余量（原3.6，减少到3.2）
 FPS = 24
 IMAGE_SIZE = (1080, 1920)
 OUTPUT_DIR = "Temp_Media"
@@ -94,6 +95,13 @@ MAX_IMAGE_RETRIES = 5
 MAX_AUDIO_RETRIES = 3
 USE_PLACEHOLDER = False
 
+# ===================== 新增优化配置 =====================
+ENABLE_BGM = True               # 是否启用背景音乐（需仓库根目录有 bgm.mp3）
+ENABLE_CROSSFADE = True         # 是否启用交叉淡化转场
+ENABLE_IMAGE_ENHANCE = True     # 是否启用图片后处理增强
+ENABLE_RANDOM_SHOT = True       # 是否随机镜头类型
+FIXED_SEED_BASE = 42            # 固定随机种子基数（每集使用 ep_num * FIXED_SEED_BASE）
+
 # ===================== 状态管理 =====================
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -108,17 +116,20 @@ def save_state(ep, ending):
     with open(STATE_FILE, 'w', encoding='utf-8') as f:
         json.dump({"episode": ep, "last_ending": ending}, f, ensure_ascii=False, indent=2)
 
-# ===================== 增强版提示词构建（特效前置） =====================
+# ===================== 提示词构建（优化版） =====================
 def build_character_prompt(scene_desc, emotion="平静", action="站立", 
                           characters=[], special_effects=""):
-    # 基础风格（加强视觉冲击）
-    base_style = ("Chinese comic style, dramatic, vertical 9:16, high detail, "
-                  "cinematic lighting, masterpiece, best quality, intricate details, "
-                  "realistic rendering, dynamic composition, 4k, 8k, high resolution, "
-                  "professional illustration, digital painting, vibrant colors, "
-                  "dramatic shadows, intense action, glowing effects, explosive energy")
+    # ------ 顶级画质和风格（权重最高） ------
+    style_prefix = "cinematic 4k, highly detailed, masterpiece, best quality, dramatic lighting, film grain, "
     
-    # 角色描述
+    # ------ 随机镜头类型（增加视觉节奏） ------
+    if ENABLE_RANDOM_SHOT:
+        shot_types = ["close-up shot", "medium shot", "wide shot", "extreme close-up", "low angle shot", "high angle shot"]
+        camera_shot = random.choice(shot_types)
+    else:
+        camera_shot = "dynamic shot"
+    
+    # ------ 角色描述 ------
     char_descs = []
     for char_name in characters:
         if char_name == "主角":
@@ -136,22 +147,24 @@ def build_character_prompt(scene_desc, emotion="平静", action="站立",
     
     emotion_action = f"{emotion} expression, {action} posture, "
     
-    # 特效放在最前面，并添加强调词
+    # ------ 特效强调（放前面） ------
     effects = f"{special_effects}, dazzling visual effects, energy burst, magical glow, " if special_effects else ""
     
-    camera_details = ("close-up shot on character's face and hands, "
+    # ------ 构图和相机细节 ------
+    camera_details = (f"{camera_shot}, "
                      "detailed facial features, dramatic shadows, depth of field, "
                      "cinematic composition, rule of thirds, "
-                     "focus on eyes and gestures, dynamic angle, "
-                     "action lines, speed lines, impact effect")
+                     "focus on eyes and gestures, action lines, speed lines, impact effect")
     
-    # 组合提示词（特效放首位）
-    full_prompt = (f"{effects}"
+    # ------ 组合提示词（限制总长度） ------
+    full_prompt = (f"{style_prefix}"
+                   f"{effects}"
                    f"{scene_desc[:80]}, "
                    f"{''.join(char_descs)[:200]}"
                    f"{emotion_action}"
                    f"{camera_details}, "
-                   f"{base_style}")[:500]
+                   f"vertical 9:16, Chinese comic style, vibrant colors, "
+                   f"realistic rendering, professional illustration")[:500]
     return full_prompt
 
 def generate_skill_effect(skill_type="剑法"):
@@ -165,71 +178,57 @@ def generate_skill_effect(skill_type="剑法"):
     }
     return random.choice(effects.get(skill_type, effects["剑法"]))
 
-# ===================== 增强版剧本生成 =====================
+# ===================== 剧本生成（增强版场景模板） =====================
 class ScriptGen:
     def __init__(self, last_ending=""):
         self.last_ending = last_ending
         self.scene_counter = 0
     
     def generate(self, topic="修仙"):
-        # ------ 增强版场景模板（更生动、更有画面感） ------
+        # ------ 增强版场景模板（更生动） ------
         enhanced_templates = [
             {"visual": "肖鹏立于峭壁之巅，狂风卷起他的蓝色道袍，他目光如电，凝视远方滚滚雷云", 
              "emotion": "决绝", "action": "负手而立，衣袂翻飞", 
              "characters": ["主角"], "skill": "", "scene_type": "独白"},
-            
             {"visual": "肖鹏与反派师兄正面交锋，双剑碰撞迸射出刺眼火花，四周碎石被气浪震飞", 
              "emotion": "愤怒", "action": "挥剑猛攻，虎口震裂", 
              "characters": ["主角", "反派师兄"], "skill": "剑法", "scene_type": "对决"},
-            
             {"visual": "肖鹏被未婚妻当众羞辱，退婚书狠狠甩在脸上，周围人群指指点点，他却攥紧双拳，指甲掐入掌心", 
              "emotion": "屈辱", "action": "咬牙隐忍，血从指缝滴落", 
              "characters": ["主角", "未婚妻"], "skill": "", "scene_type": "羞辱"},
-            
             {"visual": "师尊在月光下向肖鹏传授禁忌之术，指尖金光如丝线般缠绕两人，灵气波动扭曲了空气", 
              "emotion": "专注", "action": "盘膝闭目，双手结印", 
              "characters": ["主角", "师尊"], "skill": "法术", "scene_type": "指导"},
-            
             {"visual": "肖鹏在秘境中遭巨型妖兽扑杀，他侧身翻滚，剑气横扫，妖兽鳞甲碎片四溅，鲜血染红地面", 
              "emotion": "决绝", "action": "侧身闪避，反手斩击", 
              "characters": ["主角"], "skill": "剑法", "scene_type": "战斗"},
-            
             {"visual": "小师妹跌跌撞撞跑来，将一瓶丹药塞进肖鹏手中，满眼担忧：“师兄，你受伤了！”", 
              "emotion": "感激", "action": "轻抚她头，微笑咽下丹药", 
              "characters": ["主角", "小师妹"], "skill": "", "scene_type": "温情"},
-            
             {"visual": "神秘老者凭空现身，掌心悬浮一枚金色符文，他低声道：“这就是你体内的上古神格……”", 
              "emotion": "震惊", "action": "瞳孔骤缩，手捂胸膛", 
              "characters": ["主角", "神秘老者"], "skill": "", "scene_type": "揭露"},
-            
             {"visual": "肖鹏被仇家围攻，身中数剑，他跪倒在地，眼前闪回师尊训诫，随即体内爆发出一股金色能量，震飞所有敌人", 
              "emotion": "顿悟", "action": "眼中金光迸射，身体悬浮", 
              "characters": ["主角"], "skill": "爆发", "scene_type": "突破"},
-            
             {"visual": "肖鹏孤身面对百名修士，他仰天长啸，手中长剑化作千道剑影，如暴雨般倾泻而下，敌军溃散", 
              "emotion": "傲然", "action": "挥剑指天，剑芒万丈", 
              "characters": ["主角"], "skill": "剑法", "scene_type": "碾压"},
-            
             {"visual": "肖鹏被暗算倒下，胸口插着一柄毒刃，他颤抖着拔出来，鲜血喷涌，但他眼中燃烧着不甘", 
              "emotion": "痛苦", "action": "咬牙拔出毒刃，单膝跪地", 
              "characters": ["主角"], "skill": "", "scene_type": "危机"},
-            
             {"visual": "肖鹏在山洞中醒来，发现自己被锁链缠绕，他挣扎中体内神格共鸣，锁链寸寸断裂，金光炸裂洞壁", 
              "emotion": "狂热", "action": "仰天怒吼，挣脱锁链", 
              "characters": ["主角"], "skill": "爆发", "scene_type": "高潮"},
-            
             {"visual": "肖鹏与师尊并肩作战，两人剑气合璧，化作青龙虚影，直冲云霄，天穹都为之撕裂", 
              "emotion": "威严", "action": "与师尊同时出剑，剑势如龙", 
              "characters": ["主角", "师尊"], "skill": "剑法", "scene_type": "战斗"},
-            
             {"visual": "肖鹏在悬崖边救回落入深渊的小师妹，两人悬在半空，他手臂青筋暴起，用尽最后力气将她甩回崖顶，自己却坠落", 
              "emotion": "英勇", "action": "单手拉住小师妹，另一手攀岩", 
              "characters": ["主角", "小师妹"], "skill": "", "scene_type": "温情"},
-            
             {"visual": "肖鹏发现反派师兄竟然是自己的亲哥哥，两人对视，空气凝固，脚下地面开始龟裂", 
              "emotion": "震惊", "action": "剑尖颤抖，泪光闪烁", 
              "characters": ["主角", "反派师兄"], "skill": "", "scene_type": "揭露"},
-            
             {"visual": "肖鹏在雷劫中沐浴，天雷不断劈落，他却吸收雷霆之力，周身雷光缠绕，宛如雷神降世", 
              "emotion": "坚毅", "action": "张开双臂，迎接天雷", 
              "characters": ["主角"], "skill": "法术", "scene_type": "突破"},
@@ -242,17 +241,16 @@ class ScriptGen:
         script = []
         for i in range(SCENES_PER_EPISODE):
             template = scene_templates[(i + offset) % len(scene_templates)]
-            # 构造细节
-            scene_detail = f"{template['visual']}"
+            # 加入环境氛围
             ambiance = random.choice(["，空气仿佛凝固", "，远处传来雷鸣", "，周围灵气躁动", "，时间仿佛变慢"])
-            scene_detail += ambiance
+            scene_detail = f"{template['visual']}{ambiance}"
             
             if template['scene_type'] in ["战斗", "对决", "碾压", "高潮"]:
                 skill_desc = generate_skill_effect(template.get('skill', '剑法'))
                 scene_detail += f"，{skill_desc}炸裂四散"
             
             visual_desc = scene_detail
-            # 旁白改为更具文学性的描述，加入心理活动
+            # 旁白加入心理描写
             emotion_words = {
                 "愤怒": "他怒不可遏，眼中燃烧着复仇之火",
                 "决绝": "他已将生死置之度外，只有一往无前",
@@ -312,9 +310,11 @@ def create_silence():
         except Exception as e:
             print(f"⚠️ 静音文件创建失败: {e}")
 
-# ===================== 图片生成 =====================
-def generate_image(prompt, save_path):
-    url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width=1080&height=1920&nologo=true"
+# ===================== 图片生成（含增强和固定种子） =====================
+def generate_image(prompt, save_path, ep_seed=0):
+    # 固定种子（每集一致，提高人物一致性）
+    seed = ep_seed if ep_seed else random.randint(1, 10000)
+    url = f"https://image.pollinations.ai/prompt/{requests.utils.quote(prompt)}?width=1080&height=1920&nologo=true&seed={seed}"
     start_time = time.time()
     
     for attempt in range(MAX_IMAGE_RETRIES):
@@ -332,11 +332,18 @@ def generate_image(prompt, save_path):
                 try:
                     img = Image.open(io.BytesIO(r.content))
                     if img.size[0] >= 500 and img.size[1] >= 500:
-                        with open(save_path, 'wb') as f:
-                            f.write(r.content)
-                        print(f"✅ 成功 (尝试{attempt+1}, {elapsed:.1f}s)")
+                        # ----- 图片后处理增强 -----
+                        if ENABLE_IMAGE_ENHANCE:
+                            enhancer = ImageEnhance.Contrast(img)
+                            img = enhancer.enhance(1.25)
+                            enhancer = ImageEnhance.Color(img)
+                            img = enhancer.enhance(1.15)
+                            enhancer = ImageEnhance.Sharpness(img)
+                            img = enhancer.enhance(1.1)
+                        img.save(save_path)
+                        print(f"✅ 成功 (尝试{attempt+1}, {elapsed:.1f}s, seed={seed})")
                         return {"path": save_path, "prompt": prompt[:100], "url": url, 
-                                "status": "success", "time": elapsed, "retries": attempt}
+                                "status": "success", "time": elapsed, "retries": attempt, "seed": seed}
                 except Exception as e:
                     print(f"⚠️ 解析失败: {e}")
             elif r.status_code == 429:
@@ -368,10 +375,10 @@ def generate_image(prompt, save_path):
         img.save(save_path)
         print(f"⚠️ 使用占位图")
         return {"path": save_path, "prompt": prompt[:100], "url": url, 
-                "status": "placeholder", "time": elapsed, "retries": MAX_IMAGE_RETRIES}
+                "status": "placeholder", "time": elapsed, "retries": MAX_IMAGE_RETRIES, "seed": seed}
     else:
         return {"path": None, "prompt": prompt[:100], "url": url, 
-                "status": "failed", "time": elapsed, "retries": MAX_IMAGE_RETRIES}
+                "status": "failed", "time": elapsed, "retries": MAX_IMAGE_RETRIES, "seed": seed}
 
 # ===================== 配音 =====================
 async def gen_audio(text, path):
@@ -403,91 +410,71 @@ async def gen_audio(text, path):
     return {"path": path, "text": text[:50], "status": "silence", "voice": None, 
             "time": elapsed, "retries": MAX_AUDIO_RETRIES}
 
-# ===================== 增强版运镜（复合运动） =====================
+# ===================== 运镜（增强版微动） =====================
 def apply_camera_motion(clip, duration, scene_type="普通"):
     """
-    增强版运镜：支持同时缩放+平移+旋转，并加入随机晃动
+    增强版运镜：包含呼吸效果、复合运动
     """
-    # 根据场景类型调整运动幅度和类型
+    import math
+    
+    # 根据场景调整幅度
     if scene_type == "战斗":
-        scale_range = (0.10, 0.25)
-        pan_range = 0.35
-        rot_range = 5.0
-        shake_amp = 8
+        scale_var = 0.10
+        pan_var = 0.20
+        rot_var = 4.0
+        shake = True
     elif scene_type == "高潮":
-        scale_range = (0.08, 0.20)
-        pan_range = 0.30
-        rot_range = 8.0
-        shake_amp = 10
+        scale_var = 0.15
+        pan_var = 0.30
+        rot_var = 6.0
+        shake = True
     elif scene_type == "温情":
-        scale_range = (0.02, 0.06)
-        pan_range = 0.15
-        rot_range = 2.0
-        shake_amp = 3
+        scale_var = 0.03
+        pan_var = 0.08
+        rot_var = 1.5
+        shake = False
     else:
-        scale_range = (0.04, 0.10)
-        pan_range = 0.20
-        rot_range = 4.0
-        shake_amp = 5
+        scale_var = 0.06
+        pan_var = 0.15
+        rot_var = 3.0
+        shake = False
     
-    # 选择主运动类型，但我们会组合多个
-    motion_types = ['zoom_pan', 'zoom_rotate', 'pan_rotate', 'shake_zoom']
-    main_motion = random.choice(motion_types)
-    
-    # 缩放因子（随时间变化）
+    # 呼吸效果（正弦波）
     def scale_func(t):
-        base_scale = 1.0
-        scale_var = random.uniform(*scale_range) * (t / duration)
-        # 加入正弦波产生呼吸效果
-        breath = 0.02 * math.sin(t * 2.5)
-        return base_scale + scale_var + breath
-    
-    # 平移位置（随时间变化，产生平滑移动）
-    start_x = random.uniform(-pan_range, pan_range)
-    end_x = random.uniform(-pan_range, pan_range)
-    start_y = random.uniform(-pan_range*0.5, pan_range*0.5)
-    end_y = random.uniform(-pan_range*0.5, pan_range*0.5)
+        base = 1.0
+        breath = 0.02 * math.sin(t * 2.0)  # 呼吸
+        move = scale_var * (t / duration)
+        return base + breath + move
     
     def pos_func(t):
-        x = start_x + (end_x - start_x) * (t / duration)
-        y = start_y + (end_y - start_y) * (t / duration)
-        # 添加微小随机抖动
-        jitter = 0.02 * math.sin(t * 10) * (1 - t/duration)  # 边缘抖动减弱
-        return (x + jitter, y + jitter * 0.5)
+        # 漂移 + 微动
+        x = 0.02 * math.sin(t * 0.7) + 0.02 * math.cos(t * 1.2)
+        y = 0.02 * math.cos(t * 0.8) + 0.02 * math.sin(t * 1.1)
+        return (x, y)
     
-    # 旋转角度（随时间缓慢变化）
+    # 旋转
     def rot_func(t):
-        angle = random.uniform(-rot_range, rot_range) * (t / duration)
-        # 加入微小的正弦波动
-        angle += 0.5 * math.sin(t * 2)
-        return angle
+        return rot_var * (t / duration) + 0.5 * math.sin(t * 1.5)
     
-    # 应用组合变换
     try:
-        # 先缩放
         clip = clip.resize(scale_func)
-        # 再设置位置
         clip = clip.set_position(pos_func)
-        # 最后旋转
         clip = clip.rotate(rot_func)
         
-        # 如果场景是战斗或高潮，额外添加震动效果
-        if scene_type in ["战斗", "高潮"]:
+        if shake and scene_type in ["战斗", "高潮"]:
             def shake_effect(t):
-                amp = shake_amp * (t / duration) * (1 - t / duration)  # 中间最大
+                amp = 5 * (t / duration) * (1 - t / duration)  # 中间最大
                 return (random.uniform(-amp, amp), random.uniform(-amp, amp))
-            clip = clip.set_position(lambda t: (
-                pos_func(t)[0] + shake_effect(t)[0],
-                pos_func(t)[1] + shake_effect(t)[1]
-            ))
+            clip = clip.set_position(lambda t: (pos_func(t)[0] + shake_effect(t)[0],
+                                               pos_func(t)[1] + shake_effect(t)[1]))
         
-        motion_desc = f"复合运动（缩放{scale_range[0]:.2f}-{scale_range[1]:.2f}，平移{pan_range:.2f}，旋转{rot_range:.1f}°）"
+        motion_desc = f"复合运镜 (缩放{scale_var:.2f}, 平移{pan_var:.2f}, 旋转{rot_var:.1f})"
         return clip, motion_desc
     except Exception as e:
         print(f"⚠️ 运镜应用失败: {e}")
         return clip, "无运镜"
 
-# ===================== 字幕 =====================
+# ===================== 字幕（保持原样） =====================
 def add_subtitle(image_path, text, output_path):
     if not os.path.exists(image_path):
         return False
@@ -552,8 +539,8 @@ def create_header_footer():
         bg = ColorClip(size=IMAGE_SIZE, color=(0,0,0), duration=3)
         return bg, bg
 
-# ===================== 视频合成 =====================
-def compose(scenes, out_file):
+# ===================== 视频合成（含转场和BGM） =====================
+def compose(scenes, out_file, ep_num=0):
     try:
         header, footer = create_header_footer()
         clips = [header]
@@ -582,6 +569,7 @@ def compose(scenes, out_file):
             clip, motion = apply_camera_motion(clip, SECONDS_PER_SCENE, scene_type)
             motion_log.append({"scene": i+1, "motion": motion, "type": scene_type})
             
+            # 添加音频
             audio_path = f"{OUTPUT_DIR}/audio_{i}.mp3"
             if os.path.exists(audio_path):
                 try:
@@ -594,6 +582,12 @@ def compose(scenes, out_file):
                 except Exception as e:
                     print(f"⚠️ 音频加载失败: {e}")
             
+            # 交叉淡化转场（非第一和最后一个片段）
+            if ENABLE_CROSSFADE and i > 0:
+                clip = clip.fx(fadein, 0.2, color=(0,0,0))
+            if ENABLE_CROSSFADE and i < total - 1:
+                clip = clip.fx(fadeout, 0.2, color=(0,0,0))
+            
             clips.append(clip)
             success_count += 1
             if (i+1) % 5 == 0 or i == total-1:
@@ -605,6 +599,28 @@ def compose(scenes, out_file):
             return None, motion_log
         
         final = concatenate_videoclips(clips, method="compose")
+        
+        # ----- 添加背景音乐 -----
+        if ENABLE_BGM and os.path.exists("bgm.mp3"):
+            try:
+                bgm = AudioFileClip("bgm.mp3").volumex(0.2)
+                if bgm.duration < final.duration:
+                    bgm = audio_loop(bgm, duration=final.duration)
+                else:
+                    bgm = bgm.subclip(0, final.duration)
+                # 混合音轨
+                if final.audio is not None:
+                    final = final.set_audio(CompositeAudioClip([final.audio, bgm]))
+                else:
+                    final = final.set_audio(bgm)
+                print("✅ 背景音乐已添加")
+            except Exception as e:
+                print(f"⚠️ 背景音乐加载失败: {e}")
+        else:
+            if not os.path.exists("bgm.mp3"):
+                print("ℹ️ 未找到 bgm.mp3，跳过背景音乐")
+        
+        # 输出视频
         final.write_videofile(out_file, fps=FPS, codec='libx264', 
                               audio_codec='aac', bitrate="3000k", preset="medium")
         print(f"✅ 视频生成: {out_file}")
@@ -694,17 +710,22 @@ async def make_episode(ep_num, topic):
     print(f"📝 剧本生成完成，共 {len(script)} 幕")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     
+    # 固定种子
+    ep_seed = ep_num * FIXED_SEED_BASE
+    
+    # 生成图片
     img_logs = []
     print("\n🎨 开始生成图片...")
     for i, s in enumerate(script):
         print(f"📸 [{i+1}/{len(script)}] ", end="")
         prompt = s.get('prompt', s['visual'])
-        log = generate_image(prompt, f"{OUTPUT_DIR}/img_{i}.jpg")
+        log = generate_image(prompt, f"{OUTPUT_DIR}/img_{i}.jpg", ep_seed=ep_seed)
         img_logs.append(log)
         if i < len(script) - 1:
             print(f"⏳ 等待 {IMAGE_INTERVAL}s...")
             time.sleep(IMAGE_INTERVAL)
     
+    # 生成配音
     audio_logs = []
     print("\n🎤 开始生成配音...")
     for i, s in enumerate(script):
@@ -714,9 +735,10 @@ async def make_episode(ep_num, topic):
         if i < len(script) - 1:
             await asyncio.sleep(AUDIO_INTERVAL)
     
+    # 合成视频（传入集数用于BGM）
     print("\n🎬 开始合成视频...")
     out_file = f"短剧_第{ep_num:03d}集_90s.mp4"
-    final_video, motion_log = compose(script, out_file)
+    final_video, motion_log = compose(script, out_file, ep_num=ep_num)
     
     if final_video is not None:
         generate_report(ep_num, script, img_logs, audio_logs, motion_log, out_file, topic)
@@ -737,7 +759,7 @@ async def make_episode(ep_num, topic):
 # ===================== 主程序 =====================
 async def main():
     print("=" * 60)
-    print("🎬 AI短剧自动化工厂 v5.0（增强版）")
+    print("🎬 AI短剧自动化工厂 v6.0（极致免费优化版）")
     print("=" * 60)
     print(f"📺 剧名：{DRAMA_TITLE}")
     print(f"🎯 总集数：{MAX_EPISODES}")
@@ -747,6 +769,7 @@ async def main():
     print(f"⏱️  配音间隔：{AUDIO_INTERVAL}s")
     print(f"🔄 重试次数：{MAX_IMAGE_RETRIES}次")
     print(f"💰 费用：完全免费")
+    print("🆕 优化特性：图片增强、智能运镜、转场、BGM、镜头变化")
     print("=" * 60)
     
     create_silence()
